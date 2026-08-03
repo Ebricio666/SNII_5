@@ -124,6 +124,13 @@ st.markdown(
 
 APP_DIR = Path(__file__).resolve().parent
 DATA_CANDIDATES = [
+    # Master v2 para la app actual.
+    APP_DIR / "data" / "SNII_MASTER_v2_APP.xlsx",
+    APP_DIR / "SNII_MASTER_v2_APP.xlsx",
+    APP_DIR / "data" / "SNII_MASTER_v2_APP.parquet",
+    APP_DIR / "SNII_MASTER_v2_APP.parquet",
+
+    # Compatibilidad con versiones anteriores.
     APP_DIR / "data" / "SNII_MASTER_v1_PERSONA_ANIO.parquet",
     APP_DIR / "SNII_MASTER_v1_PERSONA_ANIO.parquet",
     APP_DIR / "data" / "SNII_MASTER_v1_PERSONA_ANIO.xlsx",
@@ -189,15 +196,35 @@ def limpiar_texto(serie: pd.Series) -> pd.Series:
 
 
 def preparar_base(df: pd.DataFrame) -> pd.DataFrame:
-    """Prepara tipos esenciales y conserva sólo columnas disponibles."""
+    """Prepara tipos esenciales y crea aliases compatibles con el master v2."""
+    df = df.copy()
+
+    # La interfaz todavía contiene varios módulos construidos con los nombres
+    # del master v1. Estos aliases permiten usar el Excel v2 sin reescribir
+    # inmediatamente todas las visualizaciones existentes.
+    aliases_v2_a_v1 = {
+        "SEXO_ANALITICO": "SEXO_CONSOLIDADO",
+        "INSTITUCION_ANALITICA": "INSTITUCION_ANUAL",
+        "DEPENDENCIA_ANALITICA": "DEPENDENCIA_ANUAL",
+        "ENTIDAD_ANALITICA": "ENTIDAD_FEDERATIVA_ANUAL",
+        "PAIS_ANALITICO": "PAIS_ANUAL",
+        "NIVEL_SNII_ANALITICO": "NIVEL_SNII_ETIQUETA",
+        "AREA_ANALITICA": "AREA_DEL_CONOCIMIENTO_ANUAL",
+        "DISCIPLINA_ANALITICA": "DISCIPLINA_ANUAL",
+        "PORCENTAJE_COMPLETITUD_ANALITICA": "PORCENTAJE_COMPLETITUD_CLAVE",
+        "REQUIERE_REVISION_ANALITICA": "REQUIERE_REVISION_MASTER",
+    }
+
+    for origen, destino in aliases_v2_a_v1.items():
+        if origen in df.columns and destino not in df.columns:
+            df[destino] = df[origen]
+
     faltantes = [col for col in COLUMNAS_MINIMAS if col not in df.columns]
     if faltantes:
         raise ValueError(
             "La base no contiene las columnas indispensables: "
             + ", ".join(faltantes)
         )
-
-    df = df.copy()
 
     df["ID_PERSONA_EXACTA"] = limpiar_texto(df["ID_PERSONA_EXACTA"])
     df["AÑO"] = pd.to_numeric(df["AÑO"], errors="coerce").astype("Int64")
@@ -247,6 +274,28 @@ def preparar_base(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def leer_excel_snii(origen) -> pd.DataFrame:
+    """Lee MASTER, PERSONA_AÑO o, como respaldo, la primera hoja disponible."""
+    libro = pd.ExcelFile(origen, engine="openpyxl")
+
+    for hoja_preferida in ("MASTER", "PERSONA_AÑO"):
+        if hoja_preferida in libro.sheet_names:
+            return pd.read_excel(
+                libro,
+                sheet_name=hoja_preferida,
+                engine="openpyxl",
+            )
+
+    if not libro.sheet_names:
+        raise ValueError("El archivo Excel no contiene hojas legibles.")
+
+    return pd.read_excel(
+        libro,
+        sheet_name=libro.sheet_names[0],
+        engine="openpyxl",
+    )
+
+
 @st.cache_data(show_spinner="Cargando la base histórica del SNII…")
 def cargar_desde_ruta(ruta: str) -> pd.DataFrame:
     """Carga Parquet o Excel desde el repositorio."""
@@ -261,11 +310,7 @@ def cargar_desde_ruta(ruta: str) -> pd.DataFrame:
 
     elif path.suffix.lower() in {".xlsx", ".xls"}:
         # El Excel se conserva como respaldo; Parquet sigue siendo recomendado.
-        df = pd.read_excel(
-            path,
-            sheet_name="PERSONA_AÑO",
-            engine="openpyxl",
-        )
+        df = leer_excel_snii(path)
 
     else:
         raise ValueError("Formato de archivo no compatible.")
@@ -288,11 +333,7 @@ def cargar_desde_upload(
         df = pd.read_parquet(buffer, engine="pyarrow")
 
     elif extension in {".xlsx", ".xls"}:
-        df = pd.read_excel(
-            buffer,
-            sheet_name="PERSONA_AÑO",
-            engine="openpyxl",
-        )
+        df = leer_excel_snii(buffer)
 
     else:
         raise ValueError("Carga un archivo .parquet o .xlsx.")
@@ -327,7 +368,7 @@ def obtener_base() -> tuple[pd.DataFrame, str]:
 
     if archivo is None:
         st.info(
-            "Coloca `SNII_MASTER_v1_PERSONA_ANIO.parquet` dentro de "
+            "Coloca `SNII_MASTER_v2_APP.xlsx` dentro de "
             "la carpeta `data/` del repositorio o carga el archivo aquí."
         )
         st.stop()
