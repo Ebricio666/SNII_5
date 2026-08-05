@@ -22,7 +22,7 @@ from sklearn.preprocessing import PolynomialFeatures
 # ============================================================
 
 st.set_page_config(
-    page_title="SNII Insight · Laboratorio de visualización",
+    page_title="SNII Insight · Asistente de investigación",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -48,15 +48,15 @@ st.markdown(
         }
 
         .snii-subtitle {
-            color: #746a80;
+            color: #667085;
             margin-top: -0.6rem;
             margin-bottom: 1.1rem;
         }
 
         .snii-note {
-            border-left: 4px solid #6d28d9;
+            border-left: 4px solid #475467;
             padding: 0.75rem 1rem;
-            background: rgba(109, 40, 217, 0.08);
+            background: rgba(71, 84, 103, 0.06);
             border-radius: 0 12px 12px 0;
             margin: 0.5rem 0 1rem;
         }
@@ -71,33 +71,33 @@ st.markdown(
         }
 
         .lab-variable {
-            background: rgba(37, 99, 235, 0.12);
-            border-color: rgba(37, 99, 235, 0.35);
-            color: #1d4ed8;
+            background: rgba(71, 84, 103, 0.06);
+            border-color: rgba(71, 84, 103, 0.22);
+            color: #344054;
         }
 
         .lab-tiempo {
-            background: rgba(22, 163, 74, 0.12);
-            border-color: rgba(22, 163, 74, 0.35);
-            color: #15803d;
+            background: rgba(71, 84, 103, 0.06);
+            border-color: rgba(71, 84, 103, 0.22);
+            color: #344054;
         }
 
         .lab-filtro {
-            background: rgba(234, 88, 12, 0.12);
-            border-color: rgba(234, 88, 12, 0.35);
-            color: #c2410c;
+            background: rgba(71, 84, 103, 0.06);
+            border-color: rgba(71, 84, 103, 0.22);
+            color: #344054;
         }
 
         .lab-ubicacion {
-            background: rgba(124, 58, 237, 0.12);
-            border-color: rgba(124, 58, 237, 0.35);
-            color: #6d28d9;
+            background: rgba(71, 84, 103, 0.06);
+            border-color: rgba(71, 84, 103, 0.22);
+            color: #475467;
         }
 
         .lab-objetivo {
-            background: rgba(219, 39, 119, 0.12);
-            border-color: rgba(219, 39, 119, 0.35);
-            color: #be185d;
+            background: rgba(71, 84, 103, 0.06);
+            border-color: rgba(71, 84, 103, 0.22);
+            color: #344054;
         }
 
         .lab-sentence {
@@ -127,8 +127,8 @@ st.markdown(
             font-weight: 750;
         }
         .snii-paso small { display: block; margin-top: 0.1rem; }
-        .paso-activo { border-color: #6d28d9; background: rgba(109, 40, 217, 0.10); }
-        .paso-listo { border-color: #15803d; background: rgba(22, 163, 74, 0.08); }
+        .paso-activo { border-color: #475467; background: rgba(71, 84, 103, 0.06); }
+        .paso-listo { border-color: #344054; background: rgba(71, 84, 103, 0.04); }
         .paso-pendiente { opacity: 0.66; }
 
     </style>
@@ -3892,11 +3892,9 @@ SINONIMOS_VARIABLES_ASISTENTE = {
 
 PALLETAS_ASISTENTE = {
     "Automática": None,
-    "Azul": ["#2563EB", "#60A5FA", "#1D4ED8", "#93C5FD", "#1E40AF"],
-    "Morado": ["#7C3AED", "#A78BFA", "#5B21B6", "#C4B5FD", "#4C1D95"],
-    "Verde": ["#059669", "#34D399", "#047857", "#6EE7B7", "#065F46"],
-    "Naranja": ["#EA580C", "#FB923C", "#C2410C", "#FDBA74", "#9A3412"],
-    "TecNM": ["#003366", "#FF6B35", "#5B7FA3", "#F59E0B", "#7A8FA6"],
+    "Azul gris": ["#344054", "#667085", "#98A2B3", "#475467", "#D0D5DD"],
+    "Escala de grises": ["#1D2939", "#475467", "#667085", "#98A2B3", "#D0D5DD"],
+    "TecNM sobrio": ["#003366", "#5B7083", "#8A9AA8", "#B8C2CC", "#344054"],
 }
 
 PALABRAS_INTENCION = {
@@ -4315,89 +4313,86 @@ def render_editor_consulta(
     df: pd.DataFrame,
     catalogo: pd.DataFrame,
     estructura: dict[str, object],
+    filtro_problematico: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
-    """Herramienta de apoyo para completar o corregir la consulta."""
+    """Solicita únicamente la información faltante o incompatible."""
 
     disponibles = catalogo.loc[catalogo["DISPONIBLE"], "VARIABLE"].tolist()
-    objetivo_actual = str(estructura.get("objetivo", "Distribución"))
+    objetivo = str(estructura.get("objetivo") or "Distribución")
     principal_actual = estructura.get("variable_principal")
+    secundaria_actual = estructura.get("variable_secundaria")
+    filtros_actuales = dict(estructura.get("filtros", {}))
+    años = sorted(pd.to_numeric(df["AÑO"], errors="coerce").dropna().astype(int).unique().tolist())
 
-    st.markdown("### Afinemos tu consulta")
-    st.caption(
-        "Confirma lo que deseas analizar. Los menús sólo muestran variables y valores disponibles en la base."
-    )
+    faltan = []
+    if principal_actual is None:
+        faltan.append("variable principal")
+    if objetivo in {"Comparación", "Relación"} and secundaria_actual is None:
+        faltan.append("variable de comparación")
+    if filtro_problematico:
+        faltan.append(str(filtro_problematico.get("variable", "filtro")))
+
+    st.markdown("### Completar consulta")
+    if faltan:
+        st.caption("Sólo se solicitan los datos necesarios: " + ", ".join(faltan) + ".")
 
     with st.form("formulario_aclaracion_asistente"):
-        c1, c2 = st.columns(2)
-        objetivo = c1.selectbox(
-            "Objetivo",
-            ["Distribución", "Comparación", "Relación", "Evolución temporal"],
-            index=["Distribución", "Comparación", "Relación", "Evolución temporal"].index(objetivo_actual),
-        )
-        principal = c2.selectbox(
-            "Variable principal",
-            disponibles,
-            index=disponibles.index(principal_actual) if principal_actual in disponibles else 0,
-        )
-
-        compatibles = opciones_variable_secundaria(catalogo, objetivo, principal)
-        opciones_secundaria = ["Ninguna", *compatibles]
-        secundaria_actual = estructura.get("variable_secundaria")
-        secundaria = st.selectbox(
-            "Variable de comparación",
-            opciones_secundaria,
-            index=opciones_secundaria.index(secundaria_actual) if secundaria_actual in opciones_secundaria else 0,
-        )
-
-        años = sorted(pd.to_numeric(df["AÑO"], errors="coerce").dropna().astype(int).unique().tolist())
-        usa_tiempo = st.checkbox(
-            "Analizar a lo largo del tiempo",
-            value=bool(estructura.get("usa_tiempo")) or objetivo == "Evolución temporal",
-        )
-        if usa_tiempo:
-            periodo_actual = estructura.get("periodo") or (min(años), max(años))
-            periodo = st.slider(
-                "Periodo",
-                min_value=min(años),
-                max_value=max(años),
-                value=(int(periodo_actual[0]), int(periodo_actual[1])),
-            )
-            anio = None
+        principal = principal_actual
+        if principal is None:
+            principal = st.selectbox("Variable principal", disponibles)
         else:
-            anio_actual = int(estructura.get("anio") or max(años))
-            anio = st.selectbox("Año", años, index=años.index(anio_actual) if anio_actual in años else len(años) - 1)
-            periodo = None
+            st.text_input("Variable principal", value=str(principal), disabled=True)
 
-        st.markdown("**Filtros opcionales**")
-        filtros_actuales = dict(estructura.get("filtros", {}))
-        variables_filtro = [
-            "Sexo", "Entidad federativa", "Institución", "Área del conocimiento",
-            "Disciplina", "Nivel SNII", "País",
-        ]
-        filtros_nuevos = {}
-        columnas = st.columns(2)
-        for indice, variable in enumerate(variables_filtro):
-            if variable in {principal, secundaria}:
-                continue
+        secundaria = secundaria_actual
+        if objetivo in {"Comparación", "Relación"} and secundaria is None:
+            compatibles = opciones_variable_secundaria(catalogo, objetivo, str(principal))
+            secundaria = st.selectbox("Variable de comparación", compatibles) if compatibles else None
+        elif secundaria:
+            st.text_input("Variable de comparación", value=str(secundaria), disabled=True)
+
+        usa_tiempo = bool(estructura.get("usa_tiempo")) or objetivo == "Evolución temporal"
+        periodo = estructura.get("periodo")
+        anio = estructura.get("anio")
+        if usa_tiempo:
+            if periodo is None:
+                periodo = st.slider("Periodo", min(años), max(años), (min(años), max(años)))
+            else:
+                st.text_input("Periodo", value=f"{periodo[0]}–{periodo[1]}", disabled=True)
+        elif anio is None:
+            anio = st.selectbox("Año", años, index=len(años)-1)
+        else:
+            st.text_input("Año", value=str(anio), disabled=True)
+
+        filtros_nuevos = dict(filtros_actuales)
+        if filtro_problematico:
+            variable = str(filtro_problematico["variable"])
             valores = opciones_valor_filtro(df, variable)
-            if not valores:
-                continue
-            opciones = ["Todos", *valores]
-            actual = filtros_actuales.get(variable, "Todos")
-            seleccion = columnas[indice % 2].selectbox(
-                variable,
+            opciones = ["Sin este filtro", *valores]
+            actual = str(filtro_problematico.get("valor", ""))
+            seleccion = st.selectbox(
+                f"Corregir {variable}",
                 opciones,
                 index=opciones.index(actual) if actual in opciones else 0,
-                key=f"aclaracion_{variable}",
             )
-            if seleccion != "Todos":
+            filtros_nuevos.pop(variable, None)
+            if seleccion != "Sin este filtro":
                 filtros_nuevos[variable] = seleccion
 
-        confirmar = st.form_submit_button(
-            "Confirmar consulta",
-            type="primary",
-            use_container_width=True,
-        )
+        agregar = st.checkbox("Agregar otro filtro", value=False)
+        if agregar:
+            variables_filtro = [
+                v for v in ["Sexo", "Entidad federativa", "Institución", "Área del conocimiento",
+                            "Disciplina", "Nivel SNII", "País"]
+                if v not in {principal, secundaria} and v not in filtros_nuevos
+            ]
+            if variables_filtro:
+                variable_extra = st.selectbox("Filtro", variables_filtro)
+                valores_extra = opciones_valor_filtro(df, variable_extra)
+                if valores_extra:
+                    valor_extra = st.selectbox("Valor", valores_extra)
+                    filtros_nuevos[variable_extra] = valor_extra
+
+        confirmar = st.form_submit_button("Continuar", type="primary", use_container_width=True)
 
     if not confirmar:
         return None
@@ -4407,7 +4402,7 @@ def render_editor_consulta(
         **estructura,
         "objetivo": objetivo,
         "variable_principal": principal,
-        "variable_secundaria": None if secundaria == "Ninguna" else secundaria,
+        "variable_secundaria": secundaria,
         "usa_tiempo": usa_tiempo,
         "periodo": periodo,
         "anio": anio,
@@ -4415,7 +4410,6 @@ def render_editor_consulta(
         "filtros": filtros_nuevos,
         "preguntas": [],
     }
-
 
 def aplicar_estilo_figura_asistente(
     figura: go.Figure,
@@ -4470,38 +4464,39 @@ def render_configuracion_visual(
     recomendaciones: list[dict[str, object]],
     estructura: dict[str, object],
 ) -> dict[str, str] | None:
-    """Pregunta por gráfica, colores y etiquetas antes de generar."""
+    """Recomienda una gráfica y deja la personalización como opción secundaria."""
 
-    st.markdown("### Recomendación visual")
     mejor = recomendaciones[0]
-    st.success(
-        f"La gráfica más adecuada es **{mejor['grafica']}** "
-        f"({mejor['porcentaje']}% de idoneidad). {mejor['razon']}"
+    st.markdown("### Visualización recomendada")
+    st.write(
+        f"**{mejor['grafica']}** ({mejor['porcentaje']}% de idoneidad). "
+        f"{mejor['razon']}"
     )
 
-    with st.form("formulario_estilo_asistente"):
-        opciones = [f"{item['grafica']} ({item['porcentaje']}%)" for item in recomendaciones]
-        seleccion = st.selectbox("Tipo de gráfica", opciones)
-        c1, c2 = st.columns(2)
-        paleta = c1.selectbox("Preferencia de colores", list(PALLETAS_ASISTENTE.keys()))
-        etiquetas = c2.selectbox(
-            "Etiquetas de datos",
-            ["Sólo al pasar el cursor", "Mostrar valores", "Sin valores visibles"],
-        )
-        titulo = st.text_input(
-            "Título de la gráfica",
-            value=f"{estructura['variable_principal']} · {estructura['periodo_texto']}",
-        )
-        c3, c4 = st.columns(2)
-        etiqueta_x = c3.text_input("Etiqueta del eje X", value="Año" if estructura.get("usa_tiempo") else "")
-        etiqueta_y = c4.text_input("Etiqueta del eje Y", value="Personas únicas")
-        generar = st.form_submit_button(
-            "Generar visualización",
-            type="primary",
-            use_container_width=True,
-        )
+    opciones = [f"{item['grafica']} ({item['porcentaje']}%)" for item in recomendaciones]
+    seleccion = st.selectbox("Tipo de gráfica", opciones, label_visibility="collapsed")
 
-    if not generar:
+    personalizar = st.checkbox("Personalizar apariencia", value=False)
+    paleta = "Automática"
+    etiquetas = "Sólo al pasar el cursor"
+    titulo = f"{estructura['variable_principal']} · {estructura['periodo_texto']}"
+    etiqueta_x = "Año" if estructura.get("usa_tiempo") else ""
+    etiqueta_y = "Personas únicas"
+
+    if personalizar:
+        with st.expander("Opciones de presentación", expanded=True):
+            c1, c2 = st.columns(2)
+            paleta = c1.selectbox("Colores", list(PALLETAS_ASISTENTE.keys()))
+            etiquetas = c2.selectbox(
+                "Etiquetas",
+                ["Sólo al pasar el cursor", "Mostrar valores", "Sin valores visibles"],
+            )
+            titulo = st.text_input("Título", value=titulo)
+            c3, c4 = st.columns(2)
+            etiqueta_x = c3.text_input("Eje X", value=etiqueta_x)
+            etiqueta_y = c4.text_input("Eje Y", value=etiqueta_y)
+
+    if not st.button("Generar análisis", type="primary", use_container_width=True, key="generar_asistente"):
         return None
 
     indice = opciones.index(seleccion)
@@ -4513,7 +4508,6 @@ def render_configuracion_visual(
         "etiqueta_x": etiqueta_x,
         "etiqueta_y": etiqueta_y,
     }
-
 
 
 def render_pasos_asistente(paso_activo: int) -> None:
@@ -4536,22 +4530,21 @@ def render_pasos_asistente(paso_activo: int) -> None:
 
 
 def render_chips_filtros(estructura: dict[str, object]) -> None:
-    """Presenta la consulta estructurada como etiquetas auditables."""
+    """Muestra únicamente los elementos ya detectados, en estilo neutro."""
 
-    chips = [
-        ("lab-objetivo", str(estructura.get("objetivo", "Análisis"))),
-        ("lab-variable", str(estructura.get("variable_principal") or "Variable pendiente")),
-        ("lab-tiempo", str(estructura.get("periodo_texto", "Periodo pendiente"))),
-    ]
-    secundaria = estructura.get("variable_secundaria")
-    if secundaria:
-        chips.append(("lab-variable", f"Comparación: {secundaria}"))
+    elementos = []
+    if estructura.get("variable_principal"):
+        elementos.append(str(estructura["variable_principal"]))
+    if estructura.get("variable_secundaria"):
+        elementos.append(f"vs. {estructura['variable_secundaria']}")
+    if estructura.get("periodo_texto"):
+        elementos.append(str(estructura["periodo_texto"]))
     for variable, valor in estructura.get("filtros", {}).items():
-        clase = "lab-ubicacion" if variable in {"Entidad federativa", "País", "Institución"} else "lab-filtro"
-        chips.append((clase, f"{variable}: {valor}"))
+        elementos.append(f"{variable}: {valor}")
 
-    html = "".join(f'<span class="lab-chip {clase}">{contenido}</span>' for clase, contenido in chips)
-    st.markdown(html, unsafe_allow_html=True)
+    if elementos:
+        html = "".join(f'<span class="lab-chip lab-variable">{item}</span>' for item in elementos)
+        st.markdown(html, unsafe_allow_html=True)
 
 
 def calcular_calidad_analisis(
@@ -4587,31 +4580,12 @@ def render_panel_calidad(
     principal: str,
     secundaria: str | None,
 ) -> None:
-    """Muestra un panel compacto de calidad metodológica del análisis."""
+    """Deja la calidad disponible como detalle metodológico no intrusivo."""
 
     calidad = calcular_calidad_analisis(base, principal, secundaria)
     if calidad.empty:
         return
-
-    cobertura_media = float(calidad["Cobertura (%)"].mean())
-    banderas = 0
-    for columna in [
-        "REQUIERE_REVISION_ANALITICA",
-        "REQUIERE_REVISION_INSTITUCIONAL",
-        "REQUIERE_REVISION_ENTIDAD",
-        "REQUIERE_REVISION_AREA",
-        "REQUIERE_REVISION_DISCIPLINA",
-    ]:
-        if columna in base.columns:
-            banderas += int(base[columna].fillna(False).astype(bool).sum())
-
-    st.subheader("Calidad del análisis")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Cobertura media", f"{cobertura_media:.1f}%")
-    c2.metric("Variables evaluadas", f"{len(calidad)}")
-    c3.metric("Registros con bandera", f"{banderas:,}")
-    st.progress(min(max(cobertura_media / 100, 0.0), 1.0))
-    with st.expander("Ver detalle de cobertura"):
+    with st.expander("Detalle metodológico"):
         st.dataframe(calidad, hide_index=True, width="stretch")
 
 
@@ -4635,52 +4609,26 @@ def render_resultado_asistente(
     catalogo: pd.DataFrame,
     estructura: dict[str, object],
 ) -> None:
-    """Flujo conversacional: confirmar, recomendar, personalizar y generar."""
+    """Genera el análisis con mínima fricción y solicita sólo lo indispensable."""
 
-    st.markdown(
-        '<div class="snii-note"><strong>Entendí inicialmente:</strong><br>'
-        + resumen_consulta_asistente(estructura)
-        + '</div>',
-        unsafe_allow_html=True,
-    )
     render_chips_filtros(estructura)
-
-    necesita_aclaracion = bool(estructura.get("preguntas"))
     base_filtrada, bitacora, diagnostico = aplicar_filtros_asistente(
-        df,
-        estructura.get("filtros", {}),
+        df, estructura.get("filtros", {})
     )
+    filtro_problematico = next((fila for fila in diagnostico if fila["despues"] == 0), None)
+    necesita_aclaracion = bool(estructura.get("preguntas")) or base_filtrada.empty
 
-    if base_filtrada.empty:
-        necesita_aclaracion = True
-        st.warning(
-            "La combinación inicial no encontró registros. No generaré una gráfica vacía: revisemos los filtros."
+    if necesita_aclaracion:
+        if base_filtrada.empty:
+            st.warning("Uno de los filtros no tiene coincidencias. Corrige únicamente ese dato.")
+        estructura_ajustada = render_editor_consulta(
+            df, catalogo, estructura, filtro_problematico=filtro_problematico
         )
-        filtro_problematico = next((fila for fila in diagnostico if fila["despues"] == 0), None)
-        if filtro_problematico:
-            st.info(
-                f"El filtro que dejó la consulta sin datos fue **{filtro_problematico['variable']} = "
-                f"{filtro_problematico['valor']}**. Puedes cambiarlo o seleccionar “Todos”."
-            )
-
-    if necesita_aclaracion or not st.session_state.get("chat_consulta_confirmada", False):
-        render_pasos_asistente(2)
-        estructura_ajustada = render_editor_consulta(df, catalogo, estructura)
         if estructura_ajustada is not None:
             st.session_state.chat_estructura = estructura_ajustada
-            st.session_state.chat_consulta_confirmada = True
             st.session_state.chat_estilo = None
             st.rerun()
         return
-
-    estructura = st.session_state.get("chat_estructura", estructura)
-    base_filtrada, bitacora, diagnostico = aplicar_filtros_asistente(
-        df,
-        estructura.get("filtros", {}),
-    )
-    if base_filtrada.empty:
-        st.session_state.chat_consulta_confirmada = False
-        st.rerun()
 
     principal = str(estructura["variable_principal"])
     secundaria = estructura.get("variable_secundaria")
@@ -4690,19 +4638,14 @@ def render_resultado_asistente(
     anio = estructura.get("anio")
 
     recomendaciones = recomendar_graficas_arbol(
-        objetivo,
-        principal,
-        secundaria,
-        usa_tiempo,
+        objetivo, principal, secundaria, usa_tiempo
     )
     if not recomendaciones:
-        st.warning("No fue posible determinar una gráfica compatible. Ajusta las variables seleccionadas.")
-        st.session_state.chat_consulta_confirmada = False
+        st.warning("La combinación no tiene una visualización compatible.")
         return
 
     estilo = st.session_state.get("chat_estilo")
     if estilo is None:
-        render_pasos_asistente(3)
         estilo_nuevo = render_configuracion_visual(recomendaciones, estructura)
         if estilo_nuevo is not None:
             st.session_state.chat_estilo = estilo_nuevo
@@ -4710,109 +4653,56 @@ def render_resultado_asistente(
         return
 
     try:
-        (
-            base_analisis,
-            columna_1,
-            columna_2,
-            tipo_1,
-            tipo_2,
-        ) = construir_dataset_arbol(
-            base_filtrada,
-            catalogo,
-            principal,
-            secundaria,
-            usa_tiempo,
-            periodo,
-            anio,
+        base_analisis, columna_1, columna_2, tipo_1, tipo_2 = construir_dataset_arbol(
+            base_filtrada, catalogo, principal, secundaria,
+            usa_tiempo, periodo, anio,
         )
-
         if base_analisis.empty:
-            st.warning("No quedaron datos suficientes después de aplicar el periodo. Ajusta la consulta.")
-            st.session_state.chat_consulta_confirmada = False
+            st.warning("No hay registros para el periodo seleccionado.")
             st.session_state.chat_estilo = None
             return
 
         figura, datos = generar_figura_arbol(
-            base_analisis,
-            principal,
-            secundaria,
-            columna_1,
-            columna_2,
-            tipo_1,
-            tipo_2,
-            estilo["grafica"],
-            usa_tiempo,
+            base_analisis, principal, secundaria, columna_1, columna_2,
+            tipo_1, tipo_2, estilo["grafica"], usa_tiempo,
         )
-
         figura = aplicar_estilo_figura_asistente(
-            figura,
-            estilo["paleta"],
-            estilo["etiquetas"],
-            estilo["titulo"],
-            estilo["etiqueta_x"],
-            estilo["etiqueta_y"],
+            figura, estilo["paleta"], estilo["etiquetas"], estilo["titulo"],
+            estilo["etiqueta_x"], estilo["etiqueta_y"],
         )
         figura.update_layout(hovermode="x unified" if usa_tiempo else "closest")
 
-        metricas = st.columns(3)
-        metricas[0].metric("Personas analizadas", f"{base_analisis['ID_PERSONA_EXACTA'].nunique():,}")
-        metricas[1].metric("Registros persona-año", f"{len(base_analisis):,}")
-        metricas[2].metric("Periodo", estructura["periodo_texto"])
-
+        c1, c2 = st.columns(2)
+        c1.metric("Personas", f"{base_analisis['ID_PERSONA_EXACTA'].nunique():,}")
+        c2.metric("Registros persona-año", f"{len(base_analisis):,}")
         st.plotly_chart(figura, width="stretch", key="chatbot_resultado_grafica")
 
-        render_pasos_asistente(4)
-        st.subheader("Interpretación automática")
-        interpretacion = interpretar_tres_componentes(
-            base_analisis,
-            columna_1,
-            columna_2,
-            tipo_1,
-            tipo_2,
-            usa_tiempo,
-        )
-        st.write(interpretacion)
+        st.markdown("### Interpretación")
+        st.write(interpretar_tres_componentes(
+            base_analisis, columna_1, columna_2, tipo_1, tipo_2, usa_tiempo
+        ))
 
-        render_panel_calidad(base_analisis, principal, secundaria)
-
-        st.subheader("Descargas reproducibles")
-        d1, d2 = st.columns(2)
-        d1.download_button(
-            "Descargar datos del análisis (CSV)",
-            data=datos.to_csv(index=False).encode("utf-8-sig"),
-            file_name="snii_insight_datos_analisis.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-        d2.download_button(
-            "Descargar visualización interactiva (HTML)",
-            data=figura.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8"),
-            file_name="snii_insight_visualizacion.html",
-            mime="text/html",
-            use_container_width=True,
-        )
-
-        st.subheader("Análisis relacionados")
-        for sugerencia in sugerencias_relacionadas(estructura):
-            st.markdown(f"- {sugerencia}")
-
-        if bitacora:
-            st.caption("Filtros aplicados: " + " · ".join(bitacora))
-
-        if usa_tiempo and periodo and periodo[1] >= 2025:
-            st.warning(
-                "El año 2025 debe interpretarse con cautela porque algunas dimensiones del master no tienen la misma cobertura que los años anteriores."
+        with st.expander("Descargas y metodología"):
+            d1, d2 = st.columns(2)
+            d1.download_button(
+                "Datos (CSV)", datos.to_csv(index=False).encode("utf-8-sig"),
+                "snii_insight_datos.csv", "text/csv", use_container_width=True,
             )
-
-        with st.expander("Ver datos utilizados"):
+            d2.download_button(
+                "Gráfica (HTML)", figura.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8"),
+                "snii_insight_grafica.html", "text/html", use_container_width=True,
+            )
+            render_panel_calidad(base_analisis, principal, secundaria)
+            if bitacora:
+                st.caption("Filtros: " + " · ".join(bitacora))
             st.dataframe(datos, width="stretch", hide_index=True)
 
         c1, c2 = st.columns(2)
-        if c1.button("Ajustar consulta", use_container_width=True, key="chat_ajustar_consulta"):
-            st.session_state.chat_consulta_confirmada = False
+        if c1.button("Nueva consulta", use_container_width=True, key="chat_nueva_consulta"):
+            st.session_state.chat_estructura = None
             st.session_state.chat_estilo = None
             st.rerun()
-        if c2.button("Cambiar diseño", use_container_width=True, key="chat_cambiar_diseno"):
+        if c2.button("Cambiar gráfica", use_container_width=True, key="chat_cambiar_diseno"):
             st.session_state.chat_estilo = None
             st.rerun()
 
@@ -4821,76 +4711,43 @@ def render_resultado_asistente(
 
 
 def render_asistente_inteligente(df: pd.DataFrame) -> None:
-    """Interfaz conversacional con aclaración y personalización progresiva."""
+    """Interfaz breve del asistente de investigación."""
 
-    st.header("1. Asistente de investigación")
-    st.markdown(
-        '<p class="snii-subtitle">'
-        "Formula una pregunta de investigación. El asistente estructura la consulta, valida la disponibilidad de datos y documenta las decisiones visuales."
-        "</p>",
-        unsafe_allow_html=True,
-    )
-
+    st.header("Asistente de investigación")
     catalogo = catalogo_analitico_disponible(df)
     base = preparar_base_laboratorio(df, catalogo)
 
-    for clave, valor in {
-        "chat_estructura": None,
-        "chat_consulta_confirmada": False,
-        "chat_estilo": None,
-    }.items():
+    for clave, valor in {"chat_estructura": None, "chat_estilo": None}.items():
         if clave not in st.session_state:
             st.session_state[clave] = valor
 
-    render_pasos_asistente(1 if st.session_state.get("chat_estructura") is None else 2)
-
-    st.markdown("### ¿Qué te gustaría investigar hoy?")
-    st.caption("Los ejemplos están formulados con variables disponibles en el master y pueden editarse antes de interpretarlos.")
     ejemplo = st.selectbox(
-        "Consulta de referencia",
-        ["Escribir mi propia consulta", *EJEMPLOS_ASISTENTE],
+        "Ejemplo",
+        ["Escribir mi consulta", *EJEMPLOS_ASISTENTE],
         key="chatbot_ejemplo",
+        label_visibility="collapsed",
     )
-
-    consulta_inicial = "" if ejemplo == "Escribir mi propia consulta" else ejemplo
+    consulta_inicial = "" if ejemplo == "Escribir mi consulta" else ejemplo
     consulta = st.text_area(
-        "¿Qué deseas analizar?",
+        "Consulta",
         value=consulta_inicial,
-        height=110,
-        placeholder="Ejemplo: Quiero comparar STEM y no STEM entre mujeres de Colima de 2000 a 2024.",
+        height=90,
+        placeholder="Ejemplo: Evolución de STEM y no STEM entre mujeres de Colima, 2000–2024.",
         key="chatbot_consulta_texto",
+        label_visibility="collapsed",
     )
 
-    columnas_boton = st.columns([1, 3])
-    analizar = columnas_boton[0].button(
-        "Interpretar consulta",
-        type="primary",
-        use_container_width=True,
-        key="chatbot_analizar",
-    )
-    columnas_boton[1].caption(
-        "El constructor guiado permanece disponible en el segundo módulo."
-    )
-
-    if analizar:
-        if len(consulta.strip()) < 8:
-            st.warning("Escribe una consulta un poco más detallada.")
+    if st.button("Analizar", type="primary", key="chatbot_analizar"):
+        if len(consulta.strip()) < 3:
+            st.warning("Escribe al menos una variable o filtro.")
         else:
             st.session_state.chat_estructura = interpretar_consulta_asistente(base, catalogo, consulta)
-            st.session_state.chat_consulta_confirmada = False
             st.session_state.chat_estilo = None
             st.rerun()
 
     estructura = st.session_state.get("chat_estructura")
     if estructura:
-        with st.chat_message("user"):
-            st.write(estructura["consulta"])
-        with st.chat_message("assistant"):
-            render_resultado_asistente(base, catalogo, estructura)
-    else:
-        st.info(
-            "Escribe una consulta para comenzar. Si falta información, el asistente te hará preguntas antes de generar la gráfica."
-        )
+        render_resultado_asistente(base, catalogo, estructura)
 
 
 # ============================================================
@@ -4900,10 +4757,10 @@ def render_asistente_inteligente(df: pd.DataFrame) -> None:
 def main() -> None:
     """Ejecuta el asistente inteligente y el constructor guiado."""
 
-    st.title("SNII Insight · Laboratorio de analítica científica")
+    st.title("SNII Insight")
     st.markdown(
         '<p class="snii-subtitle">'
-        "Laboratorio de analítica científica para formular, visualizar y documentar análisis reproducibles del SNII."
+        "Herramienta de apoyo para análisis reproducibles del SNII."
         "</p>",
         unsafe_allow_html=True,
     )
