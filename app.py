@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 import warnings
+import re
+import unicodedata
 
 import numpy as np
 import pandas as pd
@@ -3820,32 +3822,630 @@ def render_laboratorio_visualizacion(
         )
 
 
+
+# ============================================================
+# MÓDULO 1: ASISTENTE INTELIGENTE
+# ============================================================
+
+EJEMPLOS_ASISTENTE = [
+    "Quiero ver la evolución temporal de STEM vs no STEM de mujeres en Colima durante los últimos 25 años",
+    "Compara los niveles SNII de hombres y mujeres en Jalisco para 2024",
+    "Muéstrame la distribución de áreas del conocimiento en la Universidad de Colima en 2023",
+    "Quiero analizar cómo evolucionó la participación por sexo a nivel nacional entre 2000 y 2024",
+]
+
+SINONIMOS_VARIABLES_ASISTENTE = {
+    "STEM / No STEM": [
+        "stem vs no stem", "stem y no stem", "stem/no stem",
+        "stem", "no stem",
+    ],
+    "Sexo": [
+        "sexo", "mujeres y hombres", "hombres y mujeres",
+        "participacion por sexo", "participación por sexo",
+    ],
+    "Nivel SNII": [
+        "nivel snii", "niveles snii", "nivel del snii",
+        "reconocimiento snii", "candidato nivel i nivel ii nivel iii",
+    ],
+    "Área del conocimiento": [
+        "area del conocimiento", "área del conocimiento",
+        "areas del conocimiento", "áreas del conocimiento", "area", "área",
+    ],
+    "Disciplina": ["disciplina", "disciplinas"],
+    "Institución": [
+        "institucion", "institución", "instituciones", "universidad",
+        "universidades", "centro de investigacion", "centro de investigación",
+    ],
+    "Dependencia": ["dependencia", "dependencias", "unidad de adscripcion", "unidad de adscripción"],
+    "Entidad federativa": [
+        "entidad federativa", "estado", "estados", "ubicacion geografica",
+        "ubicación geográfica",
+    ],
+    "País": ["pais", "país", "paises", "países"],
+    "Años con registro": [
+        "anos con registro", "años con registro", "permanencia",
+        "antiguedad", "antigüedad", "trayectoria",
+    ],
+    "Vigente en 2025": ["vigente en 2025", "vigencia", "vigentes"],
+}
+
+
+def normalizar_consulta_asistente(texto: str) -> str:
+    """Normaliza una consulta sin perder números ni espacios."""
+
+    texto = unicodedata.normalize("NFKD", str(texto))
+    texto = "".join(
+        caracter
+        for caracter in texto
+        if not unicodedata.combining(caracter)
+    )
+    texto = texto.lower()
+    texto = re.sub(r"[^a-z0-9]+", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def detectar_objetivo_asistente(consulta_normalizada: str) -> str:
+    """Determina la intención estadística principal."""
+
+    if any(
+        expresion in consulta_normalizada
+        for expresion in [
+            "evolucion", "tendencia", "a lo largo del tiempo",
+            "por ano", "cada ano", "serie historica", "historica",
+            "historico", "durante los ultimos", "entre 20",
+        ]
+    ):
+        return "Evolución temporal"
+
+    if any(
+        expresion in consulta_normalizada
+        for expresion in ["relacion", "asociacion", "correlacion", "depende de"]
+    ):
+        return "Relación"
+
+    if any(
+        expresion in consulta_normalizada
+        for expresion in ["comparar", "compara", "comparacion", " versus ", " vs "]
+    ):
+        return "Comparación"
+
+    return "Distribución"
+
+
+def detectar_variable_asistente(
+    consulta_normalizada: str,
+    catalogo: pd.DataFrame,
+) -> str | None:
+    """Detecta la variable principal entre las disponibles."""
+
+    disponibles = set(
+        catalogo.loc[catalogo["DISPONIBLE"], "VARIABLE"].tolist()
+    )
+
+    coincidencias = []
+    for variable, sinonimos in SINONIMOS_VARIABLES_ASISTENTE.items():
+        if variable not in disponibles:
+            continue
+        for sinonimo in sinonimos:
+            clave = normalizar_consulta_asistente(sinonimo)
+            if clave and clave in consulta_normalizada:
+                coincidencias.append((len(clave), variable))
+
+    if coincidencias:
+        return sorted(coincidencias, reverse=True)[0][1]
+
+    return None
+
+
+def detectar_variable_secundaria_asistente(
+    consulta_normalizada: str,
+    catalogo: pd.DataFrame,
+    variable_principal: str | None,
+    objetivo: str,
+) -> str | None:
+    """Busca una segunda variable explícita y compatible."""
+
+    if variable_principal is None:
+        return None
+
+    compatibles = set(
+        opciones_variable_secundaria(
+            catalogo,
+            objetivo,
+            variable_principal,
+        )
+    )
+
+    coincidencias = []
+    for variable, sinonimos in SINONIMOS_VARIABLES_ASISTENTE.items():
+        if variable == variable_principal or variable not in compatibles:
+            continue
+        for sinonimo in sinonimos:
+            clave = normalizar_consulta_asistente(sinonimo)
+            if clave and clave in consulta_normalizada:
+                coincidencias.append((len(clave), variable))
+
+    if coincidencias:
+        return sorted(coincidencias, reverse=True)[0][1]
+
+    return None
+
+
+def detectar_periodo_asistente(
+    consulta_normalizada: str,
+    años_disponibles: list[int],
+    objetivo: str,
+) -> tuple[bool, tuple[int, int] | None, int | None, str]:
+    """Interpreta años, intervalos y expresiones como últimos 25 años."""
+
+    minimo = min(años_disponibles)
+    maximo = max(años_disponibles)
+
+    patron_intervalo = re.search(
+        r"(?:de|entre|desde)\s+(20\d{2})\s+(?:a|y|hasta)\s+(20\d{2})",
+        consulta_normalizada,
+    )
+    if patron_intervalo:
+        inicio, fin = map(int, patron_intervalo.groups())
+        inicio, fin = sorted((max(minimo, inicio), min(maximo, fin)))
+        return True, (inicio, fin), None, f"{inicio}–{fin}"
+
+    patron_ultimos = re.search(
+        r"(?:ultimos|ultimas|durante los ultimos)\s+(\d{1,2})\s+anos",
+        consulta_normalizada,
+    )
+    if patron_ultimos:
+        cantidad = max(1, int(patron_ultimos.group(1)))
+        inicio = max(minimo, maximo - cantidad + 1)
+        return True, (inicio, maximo), None, f"{inicio}–{maximo}"
+
+    años_mencionados = [
+        int(valor)
+        for valor in re.findall(r"\b(20\d{2})\b", consulta_normalizada)
+        if minimo <= int(valor) <= maximo
+    ]
+
+    if len(años_mencionados) >= 2:
+        inicio, fin = min(años_mencionados), max(años_mencionados)
+        return True, (inicio, fin), None, f"{inicio}–{fin}"
+
+    if objetivo == "Evolución temporal" or any(
+        frase in consulta_normalizada
+        for frase in ["todos los anos", "toda la serie", "serie completa", "25 anos"]
+    ):
+        return True, (minimo, maximo), None, f"{minimo}–{maximo}"
+
+    if años_mencionados:
+        anio = años_mencionados[0]
+        return False, None, anio, str(anio)
+
+    return False, None, maximo, str(maximo)
+
+
+def encontrar_valor_en_consulta(
+    consulta_normalizada: str,
+    valores: list[str],
+) -> str | None:
+    """Localiza el valor categórico más largo mencionado literalmente."""
+
+    candidatos = []
+    for valor in valores:
+        if pd.isna(valor):
+            continue
+        original = str(valor).strip()
+        clave = normalizar_consulta_asistente(original)
+        if len(clave) >= 3 and clave in consulta_normalizada:
+            candidatos.append((len(clave), original))
+
+    return sorted(candidatos, reverse=True)[0][1] if candidatos else None
+
+
+def detectar_filtros_asistente(
+    df: pd.DataFrame,
+    catalogo: pd.DataFrame,
+    consulta_normalizada: str,
+    variable_principal: str | None,
+    variable_secundaria: str | None,
+) -> dict[str, str]:
+    """Detecta filtros categóricos usando los valores reales de la base."""
+
+    filtros: dict[str, str] = {}
+    variables_no_filtrar = {variable_principal, variable_secundaria}
+
+    # Sexo se interpreta mediante sinónimos comunes.
+    if "Sexo" not in variables_no_filtrar:
+        columna_sexo = resolver_columna_analitica(df, "Sexo")
+        if columna_sexo:
+            if re.search(r"\b(mujer|mujeres|femenino|femenina)\b", consulta_normalizada):
+                valores = df[columna_sexo].dropna().astype(str).unique().tolist()
+                valor = next(
+                    (v for v in valores if normalizar_consulta_asistente(v) in {"mujer", "femenino", "f"}),
+                    None,
+                )
+                if valor is not None:
+                    filtros["Sexo"] = valor
+            elif re.search(r"\b(hombre|hombres|masculino|masculina)\b", consulta_normalizada):
+                valores = df[columna_sexo].dropna().astype(str).unique().tolist()
+                valor = next(
+                    (v for v in valores if normalizar_consulta_asistente(v) in {"hombre", "masculino", "m"}),
+                    None,
+                )
+                if valor is not None:
+                    filtros["Sexo"] = valor
+
+    variables_filtro = [
+        "Entidad federativa",
+        "Institución",
+        "Área del conocimiento",
+        "Disciplina",
+        "Nivel SNII",
+        "País",
+    ]
+
+    for variable in variables_filtro:
+        if variable in variables_no_filtrar:
+            continue
+        columna = resolver_columna_analitica(df, variable)
+        if columna is None:
+            continue
+        valores = (
+            df[columna]
+            .dropna()
+            .astype(str)
+            .str.strip()
+            .drop_duplicates()
+            .tolist()
+        )
+        valor = encontrar_valor_en_consulta(consulta_normalizada, valores)
+        if valor is not None:
+            filtros[variable] = valor
+
+    return filtros
+
+
+def interpretar_consulta_asistente(
+    df: pd.DataFrame,
+    catalogo: pd.DataFrame,
+    consulta: str,
+) -> dict[str, object]:
+    """Traduce una frase a una consulta analítica validada."""
+
+    normalizada = normalizar_consulta_asistente(consulta)
+    objetivo = detectar_objetivo_asistente(normalizada)
+    principal = detectar_variable_asistente(normalizada, catalogo)
+
+    # Si sólo se menciona una población como filtro, buscamos la dimensión analítica.
+    if principal is None:
+        if "mujer" in normalizada or "hombre" in normalizada:
+            principal = "Sexo"
+        elif "colima" in normalizada or "jalisco" in normalizada:
+            principal = "Entidad federativa"
+
+    secundaria = detectar_variable_secundaria_asistente(
+        normalizada,
+        catalogo,
+        principal,
+        objetivo,
+    )
+
+    años = sorted(df["AÑO"].dropna().astype(int).unique().tolist())
+    usa_tiempo, periodo, anio, periodo_texto = detectar_periodo_asistente(
+        normalizada,
+        años,
+        objetivo,
+    )
+
+    filtros = detectar_filtros_asistente(
+        df,
+        catalogo,
+        normalizada,
+        principal,
+        secundaria,
+    )
+
+    errores = []
+    if principal is None:
+        errores.append(
+            "No identifiqué la variable principal. Prueba con sexo, STEM, nivel SNII, área, disciplina, institución o entidad federativa."
+        )
+
+    return {
+        "consulta": consulta,
+        "objetivo": objetivo,
+        "variable_principal": principal,
+        "variable_secundaria": secundaria,
+        "usa_tiempo": usa_tiempo,
+        "periodo": periodo,
+        "anio": anio,
+        "periodo_texto": periodo_texto,
+        "filtros": filtros,
+        "errores": errores,
+    }
+
+
+def aplicar_filtros_asistente(
+    df: pd.DataFrame,
+    filtros: dict[str, str],
+) -> tuple[pd.DataFrame, list[str]]:
+    """Aplica filtros estructurados y devuelve una bitácora legible."""
+
+    base = df.copy()
+    bitacora = []
+
+    for variable, valor in filtros.items():
+        columna = resolver_columna_analitica(base, variable)
+        if columna is None:
+            continue
+        serie = base[columna].astype("string").str.strip()
+        mascara = serie.str.casefold().eq(str(valor).strip().casefold())
+        base = base.loc[mascara].copy()
+        bitacora.append(f"{variable}: {valor}")
+
+    return base, bitacora
+
+
+def resumen_consulta_asistente(estructura: dict[str, object]) -> str:
+    """Construye una frase breve con lo que entendió el asistente."""
+
+    principal = estructura.get("variable_principal") or "variable no identificada"
+    secundaria = estructura.get("variable_secundaria")
+    filtros = estructura.get("filtros", {})
+
+    partes = [
+        f"{estructura['objetivo']} de {principal}",
+        f"periodo {estructura['periodo_texto']}",
+    ]
+    if secundaria:
+        partes.insert(1, f"comparada con {secundaria}")
+    if filtros:
+        partes.append(
+            "filtros: " + ", ".join(f"{k} = {v}" for k, v in filtros.items())
+        )
+    return "; ".join(partes) + "."
+
+
+def render_resultado_asistente(
+    df: pd.DataFrame,
+    catalogo: pd.DataFrame,
+    estructura: dict[str, object],
+) -> None:
+    """Valida, permite ajustar y genera la visualización conversacional."""
+
+    errores = estructura.get("errores", [])
+    if errores:
+        for error in errores:
+            st.warning(error)
+        return
+
+    principal = str(estructura["variable_principal"])
+    secundaria = estructura.get("variable_secundaria")
+    objetivo = str(estructura["objetivo"])
+    usa_tiempo = bool(estructura["usa_tiempo"])
+    periodo = estructura.get("periodo")
+    anio = estructura.get("anio")
+
+    st.markdown(
+        '<div class="snii-note"><strong>Entendí tu consulta:</strong><br>'
+        + resumen_consulta_asistente(estructura)
+        + '</div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Revisar o ajustar la interpretación", expanded=False):
+        st.write("**Objetivo:**", objetivo)
+        st.write("**Variable principal:**", principal)
+        st.write("**Variable secundaria:**", secundaria or "No aplica")
+        st.write("**Periodo:**", estructura["periodo_texto"])
+        if estructura.get("filtros"):
+            st.write("**Filtros detectados:**")
+            for variable, valor in estructura["filtros"].items():
+                st.write(f"- {variable}: {valor}")
+        else:
+            st.write("**Filtros detectados:** ninguno")
+        st.caption(
+            "La primera versión del asistente usa reglas y los valores reales del master; no envía información a servicios externos."
+        )
+
+    base_filtrada, bitacora = aplicar_filtros_asistente(
+        df,
+        estructura.get("filtros", {}),
+    )
+
+    if base_filtrada.empty:
+        st.warning("La combinación de filtros no produjo registros.")
+        return
+
+    recomendaciones = recomendar_graficas_arbol(
+        objetivo,
+        principal,
+        secundaria,
+        usa_tiempo,
+    )
+
+    if not recomendaciones:
+        st.warning("No fue posible determinar una gráfica compatible.")
+        return
+
+    opciones = [
+        f"{item['grafica']} ({item['porcentaje']}%)"
+        for item in recomendaciones
+    ]
+    seleccion = st.selectbox(
+        "Gráfica recomendada",
+        opciones,
+        key="chatbot_grafica_recomendada",
+    )
+    grafica = recomendaciones[opciones.index(seleccion)]["grafica"]
+    razon = recomendaciones[opciones.index(seleccion)]["razon"]
+    st.caption(razon)
+
+    try:
+        (
+            base_analisis,
+            columna_1,
+            columna_2,
+            tipo_1,
+            tipo_2,
+        ) = construir_dataset_arbol(
+            base_filtrada,
+            catalogo,
+            principal,
+            secundaria,
+            usa_tiempo,
+            periodo,
+            anio,
+        )
+
+        if base_analisis.empty:
+            st.warning("No quedaron datos suficientes después de aplicar periodo y filtros.")
+            return
+
+        figura, datos = generar_figura_arbol(
+            base_analisis,
+            principal,
+            secundaria,
+            columna_1,
+            columna_2,
+            tipo_1,
+            tipo_2,
+            grafica,
+            usa_tiempo,
+        )
+
+        figura.update_layout(
+            height=560,
+            margin=dict(l=20, r=20, t=40, b=20),
+            hovermode="x unified" if usa_tiempo else "closest",
+        )
+
+        metricas = st.columns(3)
+        metricas[0].metric(
+            "Personas analizadas",
+            f"{base_analisis['ID_PERSONA_EXACTA'].nunique():,}",
+        )
+        metricas[1].metric("Registros persona-año", f"{len(base_analisis):,}")
+        metricas[2].metric("Periodo", estructura["periodo_texto"])
+
+        st.plotly_chart(
+            figura,
+            width="stretch",
+            key="chatbot_resultado_grafica",
+        )
+
+        st.subheader("Interpretación automática")
+        st.write(
+            interpretar_tres_componentes(
+                base_analisis,
+                columna_1,
+                columna_2,
+                tipo_1,
+                tipo_2,
+                usa_tiempo,
+            )
+        )
+
+        if bitacora:
+            st.caption("Filtros aplicados: " + " · ".join(bitacora))
+
+        if usa_tiempo and periodo and periodo[1] >= 2025:
+            st.warning(
+                "El año 2025 debe interpretarse con cautela porque algunas dimensiones del master no tienen la misma cobertura que los años anteriores."
+            )
+
+        with st.expander("Ver datos utilizados"):
+            st.dataframe(datos, width="stretch", hide_index=True)
+
+    except Exception as error:
+        st.error(f"No fue posible generar el análisis: {error}")
+
+
+def render_asistente_inteligente(df: pd.DataFrame) -> None:
+    """Interfaz conversacional del laboratorio de visualización."""
+
+    st.header("1. Asistente inteligente")
+    st.markdown(
+        '<p class="snii-subtitle">'
+        "Describe el análisis con tus propias palabras. El asistente identifica la variable, los filtros, el periodo y la gráfica más adecuada."
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    catalogo = catalogo_analitico_disponible(df)
+    base = preparar_base_laboratorio(df, catalogo)
+
+    if "chat_snii" not in st.session_state:
+        st.session_state.chat_snii = []
+
+    st.markdown("**Ejemplos de consulta**")
+    ejemplo = st.selectbox(
+        "Puedes partir de un ejemplo",
+        ["Escribir mi propia consulta", *EJEMPLOS_ASISTENTE],
+        key="chatbot_ejemplo",
+    )
+
+    consulta_inicial = "" if ejemplo == "Escribir mi propia consulta" else ejemplo
+    consulta = st.text_area(
+        "¿Qué deseas analizar?",
+        value=consulta_inicial,
+        height=110,
+        placeholder="Ejemplo: Quiero ver la evolución temporal de STEM vs no STEM de mujeres en Colima durante los últimos 25 años.",
+        key="chatbot_consulta_texto",
+    )
+
+    columnas_boton = st.columns([1, 3])
+    analizar = columnas_boton[0].button(
+        "Interpretar y analizar",
+        type="primary",
+        use_container_width=True,
+        key="chatbot_analizar",
+    )
+    columnas_boton[1].caption(
+        "El constructor guiado permanece disponible en el segundo módulo."
+    )
+
+    if analizar:
+        if len(consulta.strip()) < 8:
+            st.warning("Escribe una consulta un poco más detallada.")
+        else:
+            estructura = interpretar_consulta_asistente(base, catalogo, consulta)
+            st.session_state.chat_snii.append(
+                {"consulta": consulta, "estructura": estructura}
+            )
+
+    if st.session_state.chat_snii:
+        ultimo = st.session_state.chat_snii[-1]
+        with st.chat_message("user"):
+            st.write(ultimo["consulta"])
+        with st.chat_message("assistant"):
+            render_resultado_asistente(base, catalogo, ultimo["estructura"])
+    else:
+        st.info(
+            "Escribe una pregunta para comenzar. El asistente funciona sobre variables y categorías validadas del master SNII."
+        )
+
+
 # ============================================================
 # APLICACIÓN
 # ============================================================
 
 def main() -> None:
-    """Ejecuta únicamente el Laboratorio de visualización."""
+    """Ejecuta el asistente inteligente y el constructor guiado."""
 
     st.title("SNII Insight")
     st.markdown(
         '<p class="snii-subtitle">'
-        "Laboratorio guiado para construir una pregunta mediante "
-        "un árbol de decisión, seleccionar la gráfica recomendada "
-        "e interpretar el resultado."
+        "Explora la evolución histórica del SNII mediante una consulta conversacional o construye el análisis paso a paso."
         "</p>",
         unsafe_allow_html=True,
     )
 
     try:
         df, fuente = obtener_base()
-
     except Exception as error:
         st.error(f"No fue posible cargar la base: {error}")
         st.stop()
 
     st.sidebar.title("SNII Insight")
-    st.sidebar.caption("Laboratorio de visualización")
     st.sidebar.caption(f"Fuente activa: {fuente}")
     st.sidebar.metric("Filas persona-año", f"{len(df):,}")
     st.sidebar.metric(
@@ -3853,23 +4453,32 @@ def main() -> None:
         f"{df['ID_PERSONA_EXACTA'].nunique():,}",
     )
 
-    años = pd.to_numeric(
-        df["AÑO"],
-        errors="coerce",
-    ).dropna()
-
+    años = pd.to_numeric(df["AÑO"], errors="coerce").dropna()
     if not años.empty:
         st.sidebar.metric(
             "Cobertura temporal",
             f"{int(años.min())}–{int(años.max())}",
         )
 
-    st.sidebar.info(
-        "Esta versión contiene únicamente el árbol de decisión "
-        "y la generación de visualizaciones."
+    modulo = st.sidebar.radio(
+        "Módulo",
+        [
+            "Asistente inteligente",
+            "Constructor guiado por árbol",
+        ],
+        key="modulo_principal_snii",
     )
 
-    render_laboratorio_visualizacion(df)
+    if modulo == "Asistente inteligente":
+        st.sidebar.info(
+            "Escribe el análisis en lenguaje natural. La interpretación se valida contra las variables reales del master."
+        )
+        render_asistente_inteligente(df)
+    else:
+        st.sidebar.info(
+            "Construye el análisis mediante nodos progresivos y selecciona una de las visualizaciones recomendadas."
+        )
+        render_laboratorio_visualizacion(df)
 
 
 if __name__ == "__main__":
