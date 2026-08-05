@@ -114,6 +114,23 @@ st.markdown(
             font-weight: 750;
         }
 
+        .snii-paso {
+            border: 1px solid rgba(128, 128, 128, 0.22);
+            border-radius: 14px;
+            padding: 0.65rem 0.75rem;
+            text-align: center;
+            margin-bottom: 0.9rem;
+        }
+        .snii-paso span {
+            display: block;
+            font-size: 1.05rem;
+            font-weight: 750;
+        }
+        .snii-paso small { display: block; margin-top: 0.1rem; }
+        .paso-activo { border-color: #6d28d9; background: rgba(109, 40, 217, 0.10); }
+        .paso-listo { border-color: #15803d; background: rgba(22, 163, 74, 0.08); }
+        .paso-pendiente { opacity: 0.66; }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -3828,10 +3845,11 @@ def render_laboratorio_visualizacion(
 # ============================================================
 
 EJEMPLOS_ASISTENTE = [
-    "Quiero comparar STEM y no STEM entre mujeres de Colima de 2000 a 2024",
-    "Muéstrame la evolución anual del nivel SNII de las mujeres en Jalisco entre 2000 y 2024",
-    "Quiero ver la distribución de las áreas del conocimiento en la Universidad de Colima durante 2023",
-    "Compara la participación de mujeres y hombres por nivel SNII a nivel nacional en 2024",
+    "Quiero ver la evolución temporal de STEM vs no STEM entre 2000 y 2024",
+    "Quiero comparar mujeres y hombres por nivel SNII en 2024",
+    "Muéstrame la distribución por área del conocimiento en 2024",
+    "Quiero conocer la evolución anual del nivel SNII entre 2000 y 2024",
+    "Muéstrame la distribución de investigadores por entidad federativa en 2024",
 ]
 
 SINONIMOS_VARIABLES_ASISTENTE = {
@@ -4497,6 +4515,121 @@ def render_configuracion_visual(
     }
 
 
+
+def render_pasos_asistente(paso_activo: int) -> None:
+    """Muestra el flujo metodológico del asistente en cuatro pasos."""
+
+    pasos = [
+        (1, "Definir análisis"),
+        (2, "Confirmar consulta"),
+        (3, "Elegir visualización"),
+        (4, "Interpretar resultados"),
+    ]
+    columnas = st.columns(4)
+    for columna, (numero, etiqueta) in zip(columnas, pasos):
+        estado = "✓" if numero < paso_activo else str(numero)
+        clase = "paso-activo" if numero == paso_activo else ("paso-listo" if numero < paso_activo else "paso-pendiente")
+        columna.markdown(
+            f'<div class="snii-paso {clase}"><span>{estado}</span><small>{etiqueta}</small></div>',
+            unsafe_allow_html=True,
+        )
+
+
+def render_chips_filtros(estructura: dict[str, object]) -> None:
+    """Presenta la consulta estructurada como etiquetas auditables."""
+
+    chips = [
+        ("lab-objetivo", str(estructura.get("objetivo", "Análisis"))),
+        ("lab-variable", str(estructura.get("variable_principal") or "Variable pendiente")),
+        ("lab-tiempo", str(estructura.get("periodo_texto", "Periodo pendiente"))),
+    ]
+    secundaria = estructura.get("variable_secundaria")
+    if secundaria:
+        chips.append(("lab-variable", f"Comparación: {secundaria}"))
+    for variable, valor in estructura.get("filtros", {}).items():
+        clase = "lab-ubicacion" if variable in {"Entidad federativa", "País", "Institución"} else "lab-filtro"
+        chips.append((clase, f"{variable}: {valor}"))
+
+    html = "".join(f'<span class="lab-chip {clase}">{contenido}</span>' for clase, contenido in chips)
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def calcular_calidad_analisis(
+    base: pd.DataFrame,
+    principal: str,
+    secundaria: str | None,
+) -> pd.DataFrame:
+    """Resume cobertura y trazabilidad de las variables utilizadas."""
+
+    variables = [principal] + ([secundaria] if secundaria else [])
+    filas = []
+    for variable in variables:
+        columna = resolver_columna_analitica(base, variable)
+        if columna is None:
+            continue
+        serie = base[columna]
+        validos = serie.notna()
+        if pd.api.types.is_string_dtype(serie) or serie.dtype == object:
+            texto = serie.astype("string").str.strip().str.casefold()
+            validos &= ~texto.isin({"", "sin información", "sin informacion", "nan", "none"})
+        filas.append({
+            "Variable": variable,
+            "Columna": columna,
+            "Cobertura (%)": round(float(validos.mean() * 100), 2),
+            "Valores válidos": int(validos.sum()),
+            "Categorías": int(serie.loc[validos].nunique(dropna=True)),
+        })
+    return pd.DataFrame(filas)
+
+
+def render_panel_calidad(
+    base: pd.DataFrame,
+    principal: str,
+    secundaria: str | None,
+) -> None:
+    """Muestra un panel compacto de calidad metodológica del análisis."""
+
+    calidad = calcular_calidad_analisis(base, principal, secundaria)
+    if calidad.empty:
+        return
+
+    cobertura_media = float(calidad["Cobertura (%)"].mean())
+    banderas = 0
+    for columna in [
+        "REQUIERE_REVISION_ANALITICA",
+        "REQUIERE_REVISION_INSTITUCIONAL",
+        "REQUIERE_REVISION_ENTIDAD",
+        "REQUIERE_REVISION_AREA",
+        "REQUIERE_REVISION_DISCIPLINA",
+    ]:
+        if columna in base.columns:
+            banderas += int(base[columna].fillna(False).astype(bool).sum())
+
+    st.subheader("Calidad del análisis")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Cobertura media", f"{cobertura_media:.1f}%")
+    c2.metric("Variables evaluadas", f"{len(calidad)}")
+    c3.metric("Registros con bandera", f"{banderas:,}")
+    st.progress(min(max(cobertura_media / 100, 0.0), 1.0))
+    with st.expander("Ver detalle de cobertura"):
+        st.dataframe(calidad, hide_index=True, width="stretch")
+
+
+def sugerencias_relacionadas(estructura: dict[str, object]) -> list[str]:
+    """Propone continuaciones sencillas para una exploración de investigación."""
+
+    principal = str(estructura.get("variable_principal") or "la variable seleccionada")
+    sugerencias = []
+    if estructura.get("objetivo") != "Evolución temporal":
+        sugerencias.append(f"Analizar la evolución temporal de {principal}")
+    if "Sexo" not in estructura.get("filtros", {}) and principal != "Sexo":
+        sugerencias.append("Segmentar el análisis por sexo")
+    if "Entidad federativa" not in estructura.get("filtros", {}) and principal != "Entidad federativa":
+        sugerencias.append("Comparar los resultados por entidad federativa")
+    if principal != "Nivel SNII":
+        sugerencias.append("Desagregar los resultados por nivel SNII")
+    return sugerencias[:3]
+
 def render_resultado_asistente(
     df: pd.DataFrame,
     catalogo: pd.DataFrame,
@@ -4510,6 +4643,7 @@ def render_resultado_asistente(
         + '</div>',
         unsafe_allow_html=True,
     )
+    render_chips_filtros(estructura)
 
     necesita_aclaracion = bool(estructura.get("preguntas"))
     base_filtrada, bitacora, diagnostico = aplicar_filtros_asistente(
@@ -4530,6 +4664,7 @@ def render_resultado_asistente(
             )
 
     if necesita_aclaracion or not st.session_state.get("chat_consulta_confirmada", False):
+        render_pasos_asistente(2)
         estructura_ajustada = render_editor_consulta(df, catalogo, estructura)
         if estructura_ajustada is not None:
             st.session_state.chat_estructura = estructura_ajustada
@@ -4567,6 +4702,7 @@ def render_resultado_asistente(
 
     estilo = st.session_state.get("chat_estilo")
     if estilo is None:
+        render_pasos_asistente(3)
         estilo_nuevo = render_configuracion_visual(recomendaciones, estructura)
         if estilo_nuevo is not None:
             st.session_state.chat_estilo = estilo_nuevo
@@ -4625,17 +4761,40 @@ def render_resultado_asistente(
 
         st.plotly_chart(figura, width="stretch", key="chatbot_resultado_grafica")
 
+        render_pasos_asistente(4)
         st.subheader("Interpretación automática")
-        st.write(
-            interpretar_tres_componentes(
-                base_analisis,
-                columna_1,
-                columna_2,
-                tipo_1,
-                tipo_2,
-                usa_tiempo,
-            )
+        interpretacion = interpretar_tres_componentes(
+            base_analisis,
+            columna_1,
+            columna_2,
+            tipo_1,
+            tipo_2,
+            usa_tiempo,
         )
+        st.write(interpretacion)
+
+        render_panel_calidad(base_analisis, principal, secundaria)
+
+        st.subheader("Descargas reproducibles")
+        d1, d2 = st.columns(2)
+        d1.download_button(
+            "Descargar datos del análisis (CSV)",
+            data=datos.to_csv(index=False).encode("utf-8-sig"),
+            file_name="snii_insight_datos_analisis.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        d2.download_button(
+            "Descargar visualización interactiva (HTML)",
+            data=figura.to_html(full_html=True, include_plotlyjs="cdn").encode("utf-8"),
+            file_name="snii_insight_visualizacion.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+
+        st.subheader("Análisis relacionados")
+        for sugerencia in sugerencias_relacionadas(estructura):
+            st.markdown(f"- {sugerencia}")
 
         if bitacora:
             st.caption("Filtros aplicados: " + " · ".join(bitacora))
@@ -4664,10 +4823,10 @@ def render_resultado_asistente(
 def render_asistente_inteligente(df: pd.DataFrame) -> None:
     """Interfaz conversacional con aclaración y personalización progresiva."""
 
-    st.header("1. Asistente inteligente")
+    st.header("1. Asistente de investigación")
     st.markdown(
         '<p class="snii-subtitle">'
-        "Escribe tu pregunta. El asistente confirma los datos necesarios, recomienda la gráfica y pregunta por el diseño antes de generarla."
+        "Formula una pregunta de investigación. El asistente estructura la consulta, valida la disponibilidad de datos y documenta las decisiones visuales."
         "</p>",
         unsafe_allow_html=True,
     )
@@ -4683,9 +4842,12 @@ def render_asistente_inteligente(df: pd.DataFrame) -> None:
         if clave not in st.session_state:
             st.session_state[clave] = valor
 
-    st.markdown("**Ejemplos de consulta**")
+    render_pasos_asistente(1 if st.session_state.get("chat_estructura") is None else 2)
+
+    st.markdown("### ¿Qué te gustaría investigar hoy?")
+    st.caption("Los ejemplos están formulados con variables disponibles en el master y pueden editarse antes de interpretarlos.")
     ejemplo = st.selectbox(
-        "Puedes partir de un ejemplo",
+        "Consulta de referencia",
         ["Escribir mi propia consulta", *EJEMPLOS_ASISTENTE],
         key="chatbot_ejemplo",
     )
@@ -4738,10 +4900,10 @@ def render_asistente_inteligente(df: pd.DataFrame) -> None:
 def main() -> None:
     """Ejecuta el asistente inteligente y el constructor guiado."""
 
-    st.title("SNII Insight")
+    st.title("SNII Insight · Laboratorio de analítica científica")
     st.markdown(
         '<p class="snii-subtitle">'
-        "Explora la evolución histórica del SNII mediante una consulta conversacional o construye el análisis paso a paso."
+        "Laboratorio de analítica científica para formular, visualizar y documentar análisis reproducibles del SNII."
         "</p>",
         unsafe_allow_html=True,
     )
@@ -4770,15 +4932,15 @@ def main() -> None:
     modulo = st.sidebar.radio(
         "Módulo",
         [
-            "Asistente inteligente",
+            "Asistente de investigación",
             "Constructor guiado por árbol",
         ],
         key="modulo_principal_snii",
     )
 
-    if modulo == "Asistente inteligente":
+    if modulo == "Asistente de investigación":
         st.sidebar.info(
-            "Escribe el análisis en lenguaje natural. La interpretación se valida contra las variables reales del master."
+            "Construye una consulta reproducible y revisa la cobertura de las variables utilizadas."
         )
         render_asistente_inteligente(df)
     else:
